@@ -180,12 +180,15 @@ public class MessagingService implements MessagingServiceMBean
     
     public MessageConnectionPool getConnectionPool(InetAddress to)
     {
-    	if(!this.messageConnectionPool.containsKey(to)) 
+        MessageConnectionPool pool = this.messageConnectionPool.get(to);
+        
+    	if(pool == null) 
     	{
-    		this.messageConnectionPool.put(to, new MessageConnectionPool(to));
+    		this.messageConnectionPool.putIfAbsent(to, new MessageConnectionPool(to));
+    		pool = this.messageConnectionPool.get(to);
     	}
     	
-    	return this.messageConnectionPool.get(to);
+    	return pool;
     }
     
     private MessageConnection getConnection(InetAddress to, MessageOut<?> m)

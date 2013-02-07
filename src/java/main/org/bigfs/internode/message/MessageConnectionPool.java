@@ -53,16 +53,15 @@ public class MessageConnectionPool {
 	public MessageConnection getConnection(MessageOut<?> m)
 	{
 		 String connType = m.getMessageGroup();
-		 
-		 if(!this.connections.contains(connType))
+		 MessageConnection con = this.connections.get(connType);
+		 if(con == null)
 		 {
 			 logger.debug("create new connection to {} for {}", this.id, connType);
-			 MessageConnection con = new MessageConnection(this);
-			 con.start();
-			 this.connections.put(connType, con);
+			 this.connections.putIfAbsent(connType, new MessageConnection(this));
+			 con = this.connections.get(connType);
 		 }
 		 
-		 return this.connections.get(connType);
+		 return con;
 	}
 	
 	
