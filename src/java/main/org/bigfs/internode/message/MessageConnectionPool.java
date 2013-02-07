@@ -23,26 +23,31 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.channels.SocketChannel;
+import java.util.Collection;
 
 import org.bigfs.internode.configuration.MessagingConfiguration;
+import org.bigfs.internode.metrics.ConnectionMetrics;
 import org.cliffc.high_scale_lib.NonBlockingHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 
 
-public class ConnectionPool {
+public class MessageConnectionPool {
 	
-	private static final Logger logger = LoggerFactory.getLogger(ConnectionPool.class);
+	private static final Logger logger = LoggerFactory.getLogger(MessageConnectionPool.class);
 	
 	private final InetAddress id;
 	
 	private final NonBlockingHashMap<String, MessageConnection> connections = new NonBlockingHashMap<String, MessageConnection>();
 	
+	private ConnectionMetrics metrics;
 	
-	public ConnectionPool(InetAddress id) 
+	public MessageConnectionPool(InetAddress id) 
 	{
-		this.id = id;		
+		this.id = id;	
+		
+		metrics = new ConnectionMetrics(id, this);
 	}
 	
 	public MessageConnection getConnection(MessageOut<?> m)
@@ -60,14 +65,80 @@ public class ConnectionPool {
 		 return this.connections.get(connType);
 	}
 	
+	
+	public MessageConnection getConnection(String groupName)
+	{
+	    return this.connections.get(groupName);
+	}
+	
+	public Collection<MessageConnection> getConnections()
+	{
+	    return this.connections.values();
+	}
+	
+	public Collection<String> getConnectionGroups()
+	{
+        return this.connections.keySet();
+    }
+	
 	public Socket getSocket() throws IOException
     {       
        return  SocketChannel.open(new InetSocketAddress(id, MessagingConfiguration.getPort())).socket();           
     }
 	
-	public InetAddress getRemoteAddress(){
+	public InetAddress getRemoteAddress()
+	{
 		return this.id;
 	}
+	
+    public long getRecentTimeouts()
+    {
+        return metrics.getRecentTimeout();
+    }
+	
+	public long getTimeouts()
+    {
+       return metrics.timeouts.count();
+    }
+	
+    public void incrementTimeout()
+    {
+        metrics.timeouts.mark();
+    }
+	
+	
+	public int getPendingMessages()
+	{
+	    int count = 0;
+	    for(MessageConnection con: this.connections.values())
+	    {
+	        count += con.getPendingMessages();
+	    }
+	    
+	    return count;
+	}
+	
+	public long getDroppedMessages()
+    {
+        long count = 0;
+        for(MessageConnection con: this.connections.values())
+        {
+            count += con.getDroppedMessages();
+        }
+        
+        return count;
+    }
+	
+	public long getCompletedMesssages()
+    {
+        long count = 0;
+        for(MessageConnection con: this.connections.values())
+        {
+            count += con.getCompletedMesssages();
+        }
+        
+        return count;
+    }
 	
 	public void close()
 	{
@@ -75,5 +146,6 @@ public class ConnectionPool {
 		{
 			con.close(true);
 		}
+		metrics.release();
 	}
 }

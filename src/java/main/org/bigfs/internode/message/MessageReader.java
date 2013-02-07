@@ -8,6 +8,7 @@ import java.net.InetAddress;
 import java.net.Socket;
 
 import org.bigfs.internode.configuration.MessagingConfiguration;
+import org.bigfs.internode.events.IncomingMessageEvent;
 import org.bigfs.internode.serialization.InetAddressSerialization;
 import org.bigfs.internode.service.MessagingService;
 import org.slf4j.Logger;
@@ -21,8 +22,7 @@ public class MessageReader extends Thread
    
    private static final Logger logger = LoggerFactory.getLogger(MessageReader.class);
 
-   public MessageReader(Socket socket){
-       
+   public MessageReader(Socket socket){       
        this.socket = socket;
    }
    
@@ -39,8 +39,7 @@ public class MessageReader extends Thread
            if(isStream) {
                readStream(in, guessedOurVersion);
                return;
-           }
-           
+           }           
            readMessage(in, header, guessedOurVersion);
                                  
        }
@@ -54,7 +53,7 @@ public class MessageReader extends Thread
    
    private void readStream(DataInputStream in, int guessedOurVersion) throws IOException
    {
-	   MessagingService.getFileStreamReader(socket, guessedOurVersion).read();
+       MessagingService.getFileStreamReader(socket, guessedOurVersion).read();
    }
    
   
@@ -66,6 +65,10 @@ public class MessageReader extends Thread
        
        int remoteVersion = MessagingService.getBits(header, 15, 8);       
        from = InetAddressSerialization.deserialize(in);
+       
+       MessagingService.instance().getEventHandler().post(new IncomingMessageEvent(
+               from, guessedOurVersion, remoteVersion
+       ));
        
        MessagingService.instance().setRemoteMessagingVersion(from, Math.min(MessagingService.CURRENT_VERSION, remoteVersion));
        

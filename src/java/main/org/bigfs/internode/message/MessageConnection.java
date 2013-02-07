@@ -26,8 +26,12 @@ import java.io.IOException;
 import java.net.Socket;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.bigfs.internode.configuration.MessagingConfiguration;
+import org.bigfs.internode.events.CloseMessageConnectionEvent;
+import org.bigfs.internode.events.DiscardedMessageEvent;
+import org.bigfs.internode.events.MessageSendingEvent;
 import org.bigfs.internode.serialization.InetAddressSerialization;
 import org.bigfs.internode.service.MessagingService;
 import org.slf4j.Logger;
@@ -40,17 +44,20 @@ public class MessageConnection extends Thread {
 	
 	private static final MessageOut CLOSE_SENTINEL = new MessageOut("CLOSE");
 	private volatile boolean isStopped = false;
-	private final ConnectionPool poolInstance; 
+	private final MessageConnectionPool poolInstance; 
 	
     private volatile BlockingQueue<QueuedMessage> backlog = new LinkedBlockingQueue<QueuedMessage>();
     private volatile BlockingQueue<QueuedMessage> active = new LinkedBlockingQueue<QueuedMessage>();
     private volatile long completed = 0;
+    private volatile AtomicLong dropped = new AtomicLong(0);
     private Socket socket;
     private DataOutputStream out;
     private int targetVersion;
     private int OPEN_RETRY_DELAY = 1000;
     
-	public MessageConnection(ConnectionPool pool){
+   
+    
+	public MessageConnection(MessageConnectionPool pool){
 		super("WRITE-" + pool.getRemoteAddress());
 		
 		this.poolInstance = pool;		
@@ -82,12 +89,15 @@ public class MessageConnection extends Thread {
             if (m == CLOSE_SENTINEL)
             {
                 disconnect();  
-                if(isStopped)
+                if(isStopped)                    
                     break; 
                 continue;
             }
             if (qm.timestamp < System.currentTimeMillis() - m.getMessageTimeout())
-                continue; 
+            {
+                MessagingService.instance().getEventHandler().post(new DiscardedMessageEvent(qm));
+                dropped.incrementAndGet();
+            }
             else if (socket != null || connect())
                 writeConnected(qm);
             else
@@ -153,6 +163,9 @@ public class MessageConnection extends Thread {
                     out = new DataOutputStream(new SnappyOutputStream(new BufferedOutputStream(socket.getOutputStream())));
                 }
             
+                MessagingService.instance().getEventHandler().post(new MessageSendingEvent(
+                        poolInstance.getRemoteAddress(), maxTargetVersion
+                ));
 
                 return true;
             }
@@ -270,9 +283,12 @@ public class MessageConnection extends Thread {
         backlog.clear();
         isStopped = destroyThread; // Exit loop to stop the thread
         addToQueue(CLOSE_SENTINEL, null, null);
+        MessagingService.instance().getEventHandler().post(new CloseMessageConnectionEvent(
+                poolInstance.getRemoteAddress(), destroyThread
+        ));
     }
     
-	private static class QueuedMessage
+	public static class QueuedMessage
     {
         final MessageOut<? extends IMessage> message;
         final String id;
@@ -288,4 +304,18 @@ public class MessageConnection extends Thread {
         }
     }
 	
+	public int getPendingMessages()
+    {
+        return active.size() + backlog.size();
+    }
+
+    public long getCompletedMesssages()
+    {
+        return completed;
+    }
+
+    public long getDroppedMessages()
+    {
+        return dropped.get();
+    }
 }

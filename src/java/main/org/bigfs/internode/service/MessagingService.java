@@ -1,12 +1,14 @@
 package org.bigfs.internode.service;
 
 import java.io.IOException;
+import java.lang.management.ManagementFactory;
 import java.net.BindException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketException;
+import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
 import java.nio.channels.AsynchronousCloseException;
 import java.nio.channels.ServerSocketChannel;
@@ -20,37 +22,45 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import javax.management.MBeanServer;
+import javax.management.ObjectName;
 import javax.naming.ConfigurationException;
 
 import org.bigfs.concurrent.DebuggableThreadPoolExecutor;
 import org.bigfs.internode.configuration.MessagingConfiguration;
+import org.bigfs.internode.events.StreamSendingEvent;
 import org.bigfs.internode.message.AsyncResult;
 import org.bigfs.internode.message.CallbackInfo;
-import org.bigfs.internode.message.ConnectionPool;
 import org.bigfs.internode.message.IAsyncResult;
 import org.bigfs.internode.message.IMessage;
 import org.bigfs.internode.message.IMessageCallback;
 import org.bigfs.internode.message.IMessageHandler;
 import org.bigfs.internode.message.IVersionedSerializer;
 import org.bigfs.internode.message.MessageConnection;
+import org.bigfs.internode.message.MessageConnectionPool;
 import org.bigfs.internode.message.MessageDeliveryTask;
 import org.bigfs.internode.message.MessageIn;
 import org.bigfs.internode.message.MessageOut;
 import org.bigfs.internode.message.MessageReader;
+import org.bigfs.internode.metrics.ConnectionMetrics;
 import org.bigfs.internode.streaming.ACompressedFileStreamTask;
 import org.bigfs.internode.streaming.AFileStreamReaderTask;
 import org.bigfs.internode.streaming.AFileStreamTask;
 import org.bigfs.internode.streaming.IStreamHeader;
 import org.bigfs.internode.streaming.utils.DataOutputBuffer;
 import org.bigfs.utils.ExpiringMap;
+import org.bigfs.utils.Helper;
 import org.cliffc.high_scale_lib.NonBlockingHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.common.collect.Lists;
+import com.google.common.eventbus.AsyncEventBus;
 
-public class MessagingService
+public class MessagingService implements MessagingServiceMBean
 {
+    public static final String MBEAN_NAME = "org.bigfs.internode.service:type=MessagingService";
+    
     // 4 byte int for protocol identifier
     public static int PROTOCOL_MAGIC = 0xBFDDABFF;
     
@@ -64,7 +74,7 @@ public class MessagingService
     
     private final NonBlockingHashMap<InetAddress, Integer> versions = new NonBlockingHashMap<InetAddress, Integer>();  
     
-    private final NonBlockingHashMap<InetAddress, ConnectionPool> connectionPool = new NonBlockingHashMap<InetAddress, ConnectionPool>();
+    private final NonBlockingHashMap<InetAddress, MessageConnectionPool> messageConnectionPool = new NonBlockingHashMap<InetAddress, MessageConnectionPool>();
     
     private static final AtomicInteger idGen = new AtomicInteger(0);
     
@@ -87,6 +97,8 @@ public class MessagingService
 
     private static String fileStreamReaderClass;
     
+    private final AsyncEventBus eventHandler;
+    
     /**
      * One executor per destination InetAddress for streaming.
      * <p/>
@@ -102,6 +114,23 @@ public class MessagingService
      */
     private final ConcurrentMap<InetAddress, DebuggableThreadPoolExecutor> streamExecutors = new NonBlockingHashMap<InetAddress, DebuggableThreadPoolExecutor>();
 
+    
+    private MessagingService() {
+        eventHandler = new AsyncEventBus(
+                "MessagingService-Events",
+                DebuggableThreadPoolExecutor.createWithMaximumPoolSize("EventExecutor", Helper.getAvailableProcessors(), 1, TimeUnit.SECONDS)
+        );
+        
+        MBeanServer mbs = ManagementFactory.getPlatformMBeanServer();
+        try
+        {
+            mbs.registerMBean(this, new ObjectName(MBEAN_NAME));
+        }
+        catch (Exception e)
+        {
+            throw new RuntimeException(e);
+        }
+    }
     
     
     private static class MSHandle
@@ -149,14 +178,14 @@ public class MessagingService
         return MessagingService.CURRENT_VERSION;
     }
     
-    public ConnectionPool getConnectionPool(InetAddress to)
+    public MessageConnectionPool getConnectionPool(InetAddress to)
     {
-    	if(!this.connectionPool.containsKey(to)) 
+    	if(!this.messageConnectionPool.containsKey(to)) 
     	{
-    		this.connectionPool.put(to, new ConnectionPool(to));
+    		this.messageConnectionPool.put(to, new MessageConnectionPool(to));
     	}
     	
-    	return this.connectionPool.get(to);
+    	return this.messageConnectionPool.get(to);
     }
     
     private MessageConnection getConnection(InetAddress to, MessageOut<?> m)
@@ -494,6 +523,11 @@ public class MessagingService
         executor.execute(header.fileCount() == 0 || header.isCompressed() == false
                          ? getFileStreamTask(header, to)
                          : getCompressedFileStreamTask(header, to));
+        
+        this.getEventHandler().post(new StreamSendingEvent(
+                    to, header
+                )
+        );
     }
     
     @SuppressWarnings("unchecked")
@@ -556,6 +590,7 @@ public class MessagingService
     
     
     
+    @SuppressWarnings("unchecked")
     public static <T extends IStreamHeader> ByteBuffer getStreamHeader(T streamHeader, int version)
     {
         int header =  MessagingService.getMessageHeader(streamHeader.isCompressed(), true, version);
@@ -583,5 +618,145 @@ public class MessagingService
         
         return buffer;
     }
+
+    public AsyncEventBus getEventHandler()
+    {  
+        return this.eventHandler;
+    }
+
+    @Override
+    public Map<String, Integer> getPendingMessages()
+    {
+        Map<String, Integer> pendingMessages = new HashMap<String, Integer>();
+        for (Map.Entry<InetAddress, MessageConnectionPool> entry : messageConnectionPool.entrySet())
+        {   
+            pendingMessages.put(entry.getKey().getHostAddress(), entry.getValue().getPendingMessages());
+        }
+        
+        return pendingMessages;
+    }
+
+    @Override
+    public Map<String, Long> getCompletedMessages()
+    {
+        Map<String, Long> completedMessages = new HashMap<String, Long>();
+        for (Map.Entry<InetAddress, MessageConnectionPool> entry : messageConnectionPool.entrySet())
+        {
+            completedMessages.put(entry.getKey().getHostAddress(), entry.getValue().getCompletedMesssages());
+        }    
+        
+        return completedMessages;
+    }
+
+
+    @Override
+    public Map<String, Long> getDroppedMessages()
+    {
+        Map<String, Long> droppedMessages = new HashMap<String, Long>();
+        for (Map.Entry<InetAddress, MessageConnectionPool> entry : messageConnectionPool.entrySet())
+        {
+          droppedMessages.put(entry.getKey().getHostAddress(), entry.getValue().getDroppedMessages());
+        }    
+        
+        return droppedMessages;
+    }
+
     
+    @Override
+    public long getTotalTimeouts()
+    {        
+        return ConnectionMetrics.totalTimeouts.count();
+    }
+
+    @Override
+    public Map<String, Long> getTimeoutsPerHost()
+    {
+        Map<String, Long> result = new HashMap<String, Long>();
+        for (Map.Entry<InetAddress, MessageConnectionPool> entry: messageConnectionPool.entrySet())
+        {
+            String ip = entry.getKey().getHostAddress();
+            long recent = entry.getValue().getTimeouts();
+            result.put(ip, recent);
+        }        
+        return result;
+    }
+
+    @Override
+    public long getRecentTotalTimouts()
+    {        
+        return ConnectionMetrics.getRecentTotalTimeout();
+    }
+
+    @Override
+    public Map<String, Long> getRecentTimeoutsPerHost()
+    {
+        Map<String, Long> result = new HashMap<String, Long>();
+        for (Map.Entry<InetAddress, MessageConnectionPool> entry: messageConnectionPool.entrySet())
+        {
+            String ip = entry.getKey().getHostAddress();
+            long recent = entry.getValue().getRecentTimeouts();
+            result.put(ip, recent);
+        }
+        return result;
+    }
+
+    @Override
+    public int getVersion(String address) throws UnknownHostException
+    {
+        return getRemoteMessagingVersion(InetAddress.getByName(address));
+    }
+    
+    @Override
+    public Map<String, Integer> getPendingMessageGroups()
+    {
+        Map<String, Integer> result = new HashMap<String, Integer>();
+        for(Map.Entry<InetAddress, MessageConnectionPool> entry: messageConnectionPool.entrySet())   
+        {
+            for(String groupName: entry.getValue().getConnectionGroups())
+            {
+                if(!result.containsKey(groupName)){
+                    result.put(groupName, 0);                    
+                }
+                result.put(groupName, result.get(groupName) + entry.getValue().getConnection(groupName).getPendingMessages());
+            }
+        }
+        
+        return result;
+    }
+    
+    @Override
+    public Map<String, Long> getCompletedMessageGroups()
+    {
+        Map<String, Long> result = new HashMap<String, Long>();
+        for(Map.Entry<InetAddress, MessageConnectionPool> entry: messageConnectionPool.entrySet())   
+        {
+            for(String groupName: entry.getValue().getConnectionGroups())
+            {
+                if(!result.containsKey(groupName)){
+                    result.put(groupName, 0L);                    
+                }
+                result.put(groupName, result.get(groupName) + entry.getValue().getConnection(groupName).getCompletedMessages());
+            }
+        }
+        
+        return result;
+    }
+    
+    @Override
+    public Map<String, Long> getDroppedMessageGroups()
+    {
+        Map<String, Long> result = new HashMap<String, Long>();
+        for(Map.Entry<InetAddress, MessageConnectionPool> entry: messageConnectionPool.entrySet())   
+        {
+            for(String groupName: entry.getValue().getConnectionGroups())
+            {
+                if(!result.containsKey(groupName)){
+                    result.put(groupName, 0L);                    
+                }
+                result.put(groupName, result.get(groupName) + entry.getValue().getConnection(groupName).getDroppedMessages());
+            }
+        }
+        
+        return result;
+    }
 }
