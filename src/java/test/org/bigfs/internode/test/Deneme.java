@@ -8,6 +8,10 @@ import org.bigfs.internode.configuration.MessagingConfiguration;
 import org.bigfs.internode.message.IAsyncResult;
 import org.bigfs.internode.message.MessageOut;
 import org.bigfs.internode.service.MessagingService;
+import org.bigfs.internode.test.async.AsyncLongTimedMessage;
+import org.bigfs.internode.test.async.TestAsyncMessage;
+import org.bigfs.internode.test.async.TestAsyncMessageHandler;
+import org.bigfs.internode.test.async.TestAsyncMessageResponse;
 import org.bigfs.internode.test.stream.BigFSFileStreamHeader;
 
 public class Deneme
@@ -22,9 +26,13 @@ public class Deneme
         MessagingService.registerMessageSerializer(Test.messageType, Test.serializer);
         MessagingService.registerMessageSerializer(BigFSFileStreamHeader.messageType, BigFSFileStreamHeader.serializer);
         MessagingService.registerMessageSerializer(TestRequestResponse.messageType, TestRequestResponse.serializer);
+        MessagingService.registerMessageSerializer(TestAsyncMessage.messageType, TestAsyncMessage.serializer);
+        MessagingService.registerMessageSerializer(TestAsyncMessageResponse.messageType, TestAsyncMessageResponse.serializer);
+
         MessagingService.registerMessageGroupExecutor(Test.messageGroup, ThreadPoolExecutorFactory.multiThreadedExecutor("Test", "TestExecutor", 10));
         MessagingService.registerMessageHandlers(Test.messageType, new TestMessageHandler());
         MessagingService.registerMessageHandlers(TestRequestResponse.messageType, new TestRequestResponseMessageHandler());
+        MessagingService.registerMessageHandlers(TestAsyncMessage.messageType, new TestAsyncMessageHandler());
         
         MessagingService.registerFileStreamReaderClass("org.bigfs.internode.test.BigFSFileStreamReader");
 
@@ -50,6 +58,11 @@ public class Deneme
         BigFSFileStreamHeader header = new BigFSFileStreamHeader();        
         MessagingService.instance().send(header, InetAddress.getLocalHost());
         
+        TestAsyncMessage test3 = new TestAsyncMessage("Deneme mesajı for aysnc responses");
+        MessageOut<TestAsyncMessage> m3 = new MessageOut<TestAsyncMessage>(test3.getMessageGroup(), test3, TestAsyncMessage.serializer);
         
+        AsyncLongTimedMessage callback = new AsyncLongTimedMessage();
+        
+        MessagingService.instance().send(m3, InetAddress.getLocalHost(), callback);
     }
 }

@@ -196,12 +196,12 @@ public class MessagingService implements MessagingServiceMBean
     	return this.getConnectionPool(to).getConnection(m);
     } 
     
-    public void sendOneWay(MessageOut message, InetAddress to, String id, String replyTo)
-    {
-        this.getConnection(to, message).addToQueue(message, id, replyTo);     
+    public  void sendOneWay(MessageOut  message, InetAddress to, String id, String replyTo)
+    {        
+        this.getConnection(to, message).addToQueue(message, id, replyTo);        
     }
         
-    public void sendOneWay(MessageOut message, InetAddress to)
+    public void sendOneWay(MessageOut  message, InetAddress to)
     {
     	this.sendOneWay(message, to, MessagingService.nextId(), null);
     }
@@ -212,7 +212,8 @@ public class MessagingService implements MessagingServiceMBean
     public String send(MessageOut message, InetAddress to, IMessageCallback cb)
     {
         return send(message, to, cb, message.getMessageTimeout());
-    }
+    }    
+    
     /**
      * Send a message to a given endpoint. This method specifies a callback
      * which is invoked with the actual response.
@@ -239,6 +240,33 @@ public class MessagingService implements MessagingServiceMBean
         IAsyncResult iar = new AsyncResult();
         send(message, to, iar);
         return iar;
+    }
+    
+    public <T extends IStreamHeader> void send(T header, InetAddress to)
+    {
+        DebuggableThreadPoolExecutor executor = streamExecutors.get(to);
+        if (executor == null)
+        {
+            // Using a core pool size of 0 is important. See documentation of streamExecutors.
+            executor = DebuggableThreadPoolExecutor.createWithMaximumPoolSize("Streaming to " + to, 1, 1, TimeUnit.SECONDS);
+            DebuggableThreadPoolExecutor old = streamExecutors.putIfAbsent(to, executor);
+            if (old != null)
+            {
+                // bir diğer thread tarafından aynı yöne doğru bir  
+                // executor eklenmiş.
+                executor.shutdown();
+                executor = old;
+            }
+        }
+
+        executor.execute(header.fileCount() == 0 || header.isCompressed() == false
+                         ? getFileStreamTask(header, to)
+                         : getCompressedFileStreamTask(header, to));
+        
+        this.getEventHandler().post(new StreamSendingEvent(
+                    to, header
+                )
+        );
     }
     
     public void sendReply(MessageOut message, String replyTo, InetAddress to)
@@ -427,7 +455,8 @@ public class MessagingService implements MessagingServiceMBean
     
     
     public void receive(MessageIn message, long timestamp)
-    {          
+    {        
+        System.out.println("???" +message.messageGroup);
         Runnable runnable = new MessageDeliveryTask(message, timestamp);
         ExecutorService stage = this.getMessageGroupExecutor(message.getMessageGroup());
         stage.execute(runnable);        
@@ -506,32 +535,7 @@ public class MessagingService implements MessagingServiceMBean
         return dropabbleMessageGroups.contains(messageGroup);
     }
     
-    public <T extends IStreamHeader> void send(T header, InetAddress to)
-    {
-        DebuggableThreadPoolExecutor executor = streamExecutors.get(to);
-        if (executor == null)
-        {
-            // Using a core pool size of 0 is important. See documentation of streamExecutors.
-            executor = DebuggableThreadPoolExecutor.createWithMaximumPoolSize("Streaming to " + to, 1, 1, TimeUnit.SECONDS);
-            DebuggableThreadPoolExecutor old = streamExecutors.putIfAbsent(to, executor);
-            if (old != null)
-            {
-                // bir diğer thread tarafından aynı yöne doğru bir  
-                // executor eklenmiş.
-                executor.shutdown();
-                executor = old;
-            }
-        }
-
-        executor.execute(header.fileCount() == 0 || header.isCompressed() == false
-                         ? getFileStreamTask(header, to)
-                         : getCompressedFileStreamTask(header, to));
-        
-        this.getEventHandler().post(new StreamSendingEvent(
-                    to, header
-                )
-        );
-    }
+    
     
     @SuppressWarnings("unchecked")
     private static <T extends AFileStreamTask<IStreamHeader>> T getFileStreamTask(IStreamHeader header, InetAddress to) throws RuntimeException
@@ -737,7 +741,7 @@ public class MessagingService implements MessagingServiceMBean
             {
                 if(!result.containsKey(groupName)){
                     result.put(groupName, 0L);                    
-                }
+                }                
                 result.put(groupName, result.get(groupName) + entry.getValue().getConnection(groupName).getCompletedMessages());
             }
         }

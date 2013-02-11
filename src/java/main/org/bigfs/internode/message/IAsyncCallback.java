@@ -23,10 +23,10 @@ package org.bigfs.internode.message;
  * service.  In particular, if any shared state is referenced, making
  * response alone synchronized will not suffice.
  */
-public interface IAsyncCallback<T extends IMessage> extends IMessageCallback
+public interface IAsyncCallback extends IMessageCallback
 {
     /**
      * @param msg response received.
      */
-    public void response(MessageIn<T> msg);
+    public <T extends IMessage> void response(MessageIn<T> msg);
 }
