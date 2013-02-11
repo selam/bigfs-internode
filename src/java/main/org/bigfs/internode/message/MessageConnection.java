@@ -60,7 +60,9 @@ public class MessageConnection extends Thread {
 	public MessageConnection(MessageConnectionPool pool){
 		super("WRITE-" + pool.getRemoteAddress());
 		
-		this.poolInstance = pool;		
+		this.poolInstance = pool;	
+		
+		this.start();
 	}
 	
 	public void run()
@@ -99,10 +101,15 @@ public class MessageConnection extends Thread {
                 dropped.incrementAndGet();
             }
             else if (socket != null || connect())
+            {
+                
                 writeConnected(qm);
+            }
             else
+            {
                 // clear out the queue, else gossip messages back up.
                 active.clear();
+            }
         }
     }
 	
@@ -246,6 +253,7 @@ public class MessageConnection extends Thread {
     
     public static void write(MessageOut message, String id, String replyTo, long timestamp, DataOutputStream out, int version) throws IOException
     {
+        
         out.writeUTF(id);
         out.writeUTF(replyTo == null ? "-1": replyTo);
         out.writeInt((int) timestamp);        
@@ -309,7 +317,7 @@ public class MessageConnection extends Thread {
         return active.size() + backlog.size();
     }
 
-    public long getCompletedMesssages()
+    public long getCompletedMessages()
     {
         return completed;
     }

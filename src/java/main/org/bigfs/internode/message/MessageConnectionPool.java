@@ -133,7 +133,7 @@ public class MessageConnectionPool {
         long count = 0;
         for(MessageConnection con: this.connections.values())
         {
-            count += con.getCompletedMesssages();
+            count += con.getCompletedMessages();
         }
         
         return count;
