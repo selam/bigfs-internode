@@ -456,7 +456,6 @@ public class MessagingService implements MessagingServiceMBean
     
     public void receive(MessageIn message, long timestamp)
     {        
-        System.out.println("???" +message.messageGroup);
         Runnable runnable = new MessageDeliveryTask(message, timestamp);
         ExecutorService stage = this.getMessageGroupExecutor(message.getMessageGroup());
         stage.execute(runnable);        
