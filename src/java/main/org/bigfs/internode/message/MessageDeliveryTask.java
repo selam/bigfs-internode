@@ -20,24 +20,20 @@ public class MessageDeliveryTask implements Runnable
 
     public void run()
     {
-        String messageGroup = message.getMessageGroup();
-        
+        String messageGroup = message.getMessageGroup();       
         int messageType = message.getMessageType();
         if (MessagingService.isDroppableMessage(messageGroup)
             && System.currentTimeMillis() > constructionTime + message.getTimeout())
         {
             return;
         }
-
-        CallbackInfo callback = MessagingService.instance().getRegisteredCallback(message.getReplyTo());
         
+        CallbackInfo callback = MessagingService.instance().getRegisteredCallback(message.getReplyTo());
         if(callback == null){
-            
             IMessageHandler<? extends IMessage> messageHandler = MessagingService.instance().getMesssageHandler(messageType);
-            
             if (messageHandler == null)
-            {
-                logger.debug("Unknown message group {}", messageGroup);
+            {                
+                logger.debug("Unknown message type {}", messageType);
                 return;
             }
             
@@ -45,6 +41,7 @@ public class MessageDeliveryTask implements Runnable
         }
         else
         {           
+            
            if(callback.callback instanceof IAsyncCallback){
                ((IAsyncCallback) callback.callback).response(message);
            }
