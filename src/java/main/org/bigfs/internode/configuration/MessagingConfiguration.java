@@ -8,7 +8,7 @@ public class MessagingConfiguration
     
     private static InetAddress listenAddress;
     
-    private static int rpc_timeout = 1000;
+    private static int rpc_timeout = 10000;
     private static boolean is_compression_enable = false;
     private static int streaming_socket_timeout_in_ms = 0;
     /**
