@@ -74,7 +74,7 @@ public class JMXEnabledThreadPoolExecutor extends DebuggableThreadPoolExecutor i
 
 
         MBeanServer mbs = ManagementFactory.getPlatformMBeanServer();
-        mbeanName = "org.apache.cassandra." + jmxPath + ":type=" + threadFactory.id;
+        mbeanName = "org.bigfs.concurrent." + jmxPath + ":type=" + threadFactory.id;
 
         try
         {
