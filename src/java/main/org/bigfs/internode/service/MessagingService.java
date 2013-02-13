@@ -28,6 +28,7 @@ import javax.naming.ConfigurationException;
 
 import org.bigfs.concurrent.DebuggableThreadPoolExecutor;
 import org.bigfs.internode.configuration.MessagingConfiguration;
+import org.bigfs.internode.events.CallbackExpireEvent;
 import org.bigfs.internode.events.StreamSendingEvent;
 import org.bigfs.internode.message.AsyncResult;
 import org.bigfs.internode.message.CallbackInfo;
@@ -50,10 +51,12 @@ import org.bigfs.internode.streaming.IStreamHeader;
 import org.bigfs.internode.streaming.utils.DataOutputBuffer;
 import org.bigfs.utils.ExpiringMap;
 import org.bigfs.utils.Helper;
+import org.bigfs.utils.Pair;
 import org.cliffc.high_scale_lib.NonBlockingHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.google.common.base.Function;
 import com.google.common.collect.Lists;
 import com.google.common.eventbus.AsyncEventBus;
 
@@ -80,14 +83,23 @@ public class MessagingService implements MessagingServiceMBean
     
     private static final HashMap<Integer, IVersionedSerializer<? extends IMessage>> messageSerializers = new HashMap<Integer, IVersionedSerializer<? extends IMessage>>();
     
-    private static final HashMap<String, ThreadPoolExecutor> executors = new HashMap<String, ThreadPoolExecutor>();
+    private static final NonBlockingHashMap<String, ThreadPoolExecutor> executors = new NonBlockingHashMap<String, ThreadPoolExecutor>();
 
     private static final List<String> dropabbleMessageGroups = Lists.newArrayList();
 
     private static final Map<Integer, IMessageHandler<?>> messageHandlers = new HashMap<Integer, IMessageHandler<?>>();
     
     /* This records all the results mapped by message Id */
-    private final ExpiringMap<String, CallbackInfo> callbacks = new ExpiringMap<String, CallbackInfo>(MessagingConfiguration.getRpcTimeout(), null);
+    private final ExpiringMap<String, CallbackInfo> callbacks = new ExpiringMap<String, CallbackInfo>(MessagingConfiguration.getRpcTimeout(), new Function<Pair<String, ExpiringMap.CacheableObject<CallbackInfo>>, Object>(){
+        public Object apply(Pair<String, ExpiringMap.CacheableObject<CallbackInfo>> pair)
+        {   
+            MessagingService.instance().getEventHandler().post(
+                    new CallbackExpireEvent(pair.right.value, pair.right.timeout)
+            );
+            
+            return null;
+        }
+    });
     
     private static final HashMap<Integer, IVersionedSerializer<?>> responseSerializers = new HashMap<Integer, IVersionedSerializer<?>>();
     
@@ -130,6 +142,8 @@ public class MessagingService implements MessagingServiceMBean
         {
             throw new RuntimeException(e);
         }
+        
+        eventHandler.register(new MessagingServiceEventHandler());
     }
     
     
@@ -211,6 +225,7 @@ public class MessagingService implements MessagingServiceMBean
      */
     public String send(MessageOut message, InetAddress to, IMessageCallback cb)
     {
+        
         return send(message, to, cb, message.getMessageTimeout());
     }    
     
@@ -229,9 +244,8 @@ public class MessagingService implements MessagingServiceMBean
     public String send(MessageOut message, InetAddress to, IMessageCallback cb, long timeout)
     {
         String id = addCallback(cb, message, to, timeout);
-
-        
-        sendOneWay(message, to, id, null);
+   
+        sendOneWay(message, to, id, "-1");
         return id;
     }
     

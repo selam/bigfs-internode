@@ -26,8 +26,8 @@ import java.net.InetAddress;
  */
 public class CallbackInfo
 {
-    protected final InetAddress target;
-    protected final IMessageCallback callback;
+    public final InetAddress target;
+    public final IMessageCallback callback;
     protected final MessageOut sentMessage;
 
     /**
