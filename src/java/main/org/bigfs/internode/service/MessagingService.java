@@ -29,6 +29,7 @@ import javax.naming.ConfigurationException;
 import org.bigfs.concurrent.DebuggableThreadPoolExecutor;
 import org.bigfs.internode.configuration.MessagingConfiguration;
 import org.bigfs.internode.events.CallbackExpireEvent;
+import org.bigfs.internode.events.MessagingServiceStartEvent;
 import org.bigfs.internode.events.StreamSendingEvent;
 import org.bigfs.internode.message.AsyncResult;
 import org.bigfs.internode.message.CallbackInfo;
@@ -88,7 +89,7 @@ public class MessagingService implements MessagingServiceMBean
     private static final List<String> dropabbleMessageGroups = Lists.newArrayList();
 
     private static final Map<Integer, IMessageHandler<?>> messageHandlers = new HashMap<Integer, IMessageHandler<?>>();
-    
+        
     /* This records all the results mapped by message Id */
     private final ExpiringMap<String, CallbackInfo> callbacks = new ExpiringMap<String, CallbackInfo>(MessagingConfiguration.getRpcTimeout(), new Function<Pair<String, ExpiringMap.CacheableObject<CallbackInfo>>, Object>(){
         public Object apply(Pair<String, ExpiringMap.CacheableObject<CallbackInfo>> pair)
@@ -170,12 +171,17 @@ public class MessagingService implements MessagingServiceMBean
      */
     public void listen() throws Exception
     {
+        List<InetAddress> socketAddresses = new ArrayList<InetAddress>();
         for (ServerSocket ss : getServerSocket())
         {
+            socketAddresses.add(ss.getInetAddress());
             MessagingThread th = new MessagingThread(ss, "ACCEPT-" + ss.getInetAddress());
             th.start();
             messagingThreads.add(th);
-        }   
+        }  
+        
+        eventHandler.post(new MessagingServiceStartEvent(socketAddresses));
+        
     }
     /**
      * returns remote node messaging protocol version, if remote node 
