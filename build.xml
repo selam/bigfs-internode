@@ -24,23 +24,13 @@
         </fileset>
    </path>
 
-   <pathconvert property="mf.classpath" pathsep=" ">
-        <path refid="build.classpath"/>
-        <mapper>
-                <chainedmapper>
-                        <flattenmapper/>
-                        <globmapper from="*.jar" to="lib/*.jar"/>
-                </chainedmapper>
-        </mapper>
-    </pathconvert>
 
     <target name="jar" depends="compile">
         <mkdir dir="${jar.dir}"/>
 
         <jar destfile="${jar.dir}/${ant.project.name}.jar" basedir="${classes.dir}">
-            <zipgroupfileset dir="lib" includes="*.jar" />
             <manifest>
-                <attribute name="Class-Path" value="${mf.classpath}"/>
+                <attribute name="Class-Path" value="${build.classpath}"/>
             </manifest>
         </jar>
     </target>
